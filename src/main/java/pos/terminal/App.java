@@ -2,6 +2,7 @@ package pos.terminal;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -29,13 +30,12 @@ public class App {
     private static final String SERVER_HOST = "127.0.0.1";
     private static final int SERVER_PORT = 12345;
 	
-	// Предположим, ключ из конфигурации
     private static final String HMAC_KEY = "31101993";
     
     public static void main(String[] args) throws Exception {
     
     	String cardNumber = "4242424242424242";
-        int amountCents = 33450; // например, 123.45
+        int amountCents = 33450;
         int merchantId = 9876;
 
         byte[] transactionBytes = createTransaction(cardNumber, amountCents, merchantId);
@@ -62,7 +62,7 @@ public class App {
         // 2. Шифрование payload
         byte[] encryptedPayload = encryptAESGCM(payload, sessionKey);
         System.out.println("Encrypted Payload: " + bytesToHex(encryptedPayload));
-        // 3. RSA публичный ключ сервера (загрузить из файла или строки в формате PEM)
+        // 3. RSA публичный ключ сервера (формат PEM)
         try {
             PublicKey serverPublicKey = loadPublicKey("C:/My Disc/app/1-JAVA APP/PEM/public_key.pem");
             System.out.println("Public Key: " + serverPublicKey);
@@ -71,76 +71,69 @@ public class App {
             byte[] encryptedSessionKey = encryptSessionKeyRSA(sessionKey, serverPublicKey);
             System.out.println("Cypher session key: " + java.util.Base64.getEncoder().encodeToString(encryptedSessionKey));
         
-            // 5. IV для AES-GCM (обычно 12 байт)
+            // 5. IV для AES-GCM
             byte[] iv = generateIV();
 
-	        // 6. HMAC подпись данных (например, подпись encryptedPayload)
+	        // 6. HMAC подпись данных (encryptedPayload)
 	        String hmacSignature = generateHMACSHA256(encryptedPayload, HMAC_KEY);
 	        byte[] hmacBytes = hmacSignature.getBytes(StandardCharsets.UTF_8);
 	
-	        // 7. Собираем пакет
+	        // 7. Пакет
 	        byte[] packet = buildPacket(encryptedSessionKey, iv, hmacBytes, encryptedPayload);
 	
-	        // Теперь у вас есть полный пакет, который можете отправить или сохранить
 	        System.out.println("Final Packet (hex): " + bytesToHex(packet));
 	        
 	        parsePacket(packet);
 
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+
      // 8) Отправляем данные на сервер
-        try (Socket socket = new Socket(SERVER_HOST, SERVER_PORT);
-             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
-
-            // Отправляем длину зашифрованного RSA-ключ
-//            dos.writeInt(encryptedSessionKey.length);
-            // Отправляем зашифрованный RSA-ключ
-//            dos.write(encryptedSessionKey);
-//        	dos.writeInt(transactionBytes.length);
-            dos.writeInt(bytesToHex(transactionBytes).length());
-            dos.writeBytes(bytesToHex(transactionBytes));
-            
-            // Запись строки
-            dos.writeUTF(card);
-
-            // Запись суммы
-            dos.writeInt(amount);
-
-            // Запись транзакционного ID
-            dos.writeUTF(transId);
-
-            // Запись merchantId
-            dos.writeInt(merchtId);
-            
-            dos.writeUTF(signature);
-//            dos.writeChars(signature);
-//            // Отправляем длину зашифрованных данных
-//            dos.writeInt(encryptedPayload.length);
-//            // Отправляем зашифрованные данные
-//            dos.write(encryptedPayload);
-            System.out.println("Encrypted data sent to server.");
-        } catch (Exception e) {
-        	System.out.println("Server is not launched, exception:" + e);
-        }
+	        try (Socket socket = new Socket(SERVER_HOST, SERVER_PORT);
+	             DataOutputStream dos = new DataOutputStream(socket.getOutputStream())) {
+	
+	            // Отправляем зашифрованный RSA-ключ
+	        	dos.writeInt(bytesToHex(encryptedSessionKey).length());
+	            dos.writeBytes(bytesToHex(encryptedSessionKey));
+	//        	Отправляем размер транзакции 
+	            dos.writeInt(bytesToHex(transactionBytes).length());
+	            dos.writeBytes(bytesToHex(transactionBytes));
+	            
+	            // Отправляем строки
+	            dos.writeUTF(card);
+	
+	            // Отправляем сумму
+	            dos.writeInt(amount);
+	
+	            // Отправляем транзакционную ID
+	            dos.writeUTF(transId);
+	
+	            // Отправляем merchantId
+	            dos.writeInt(merchtId);
+	            
+	            // Отправляем подпись	            
+	            dos.writeUTF(signature);
+	            
+	            System.out.println("Encrypted data sent to server.");
+	        } catch (Exception e) {
+	        	System.out.println("Server is not launched, exception:" + e);
+	        }
+	    } catch (Exception e) {
+	        e.printStackTrace();
+	    }
     }
     
     public static byte[] createTransaction(String cardNumber, int amountCents, int merchantId) {
-        // Маскируем номер карты
+        
         String maskedCard = maskCardNumber(cardNumber);
 
-        // Генерируем уникальный transaction_id
         String transactionId = generateTransactionId();
 
         // Фиксированные длины полей
-        final int CARD_LEN = 20;     // длина маскированного номера карты
-        final int TRAN_ID_LEN = 50;  // длина transaction_id
+        final int CARD_LEN = 20;     
+        final int TRAN_ID_LEN = 50;  
 
-        // Кодируем строки в байты с фиксированной длиной
         byte[] cardBytes = fixedLengthBytes(maskedCard, CARD_LEN);
         byte[] transIdBytes = fixedLengthBytes(transactionId, TRAN_ID_LEN);
 
-        // Кодируем числовые поля
         ByteBuffer buffer = ByteBuffer.allocate(CARD_LEN + 4 + TRAN_ID_LEN + 4);
 
         buffer.put(cardBytes);
@@ -174,7 +167,6 @@ public class App {
         byte[] strBytes = str.getBytes(StandardCharsets.UTF_8);
         int copyLength = Math.min(strBytes.length, length);
         System.arraycopy(strBytes, 0, bytes, 0, copyLength);
-        // остальное заполняется нулями
         return bytes;
     }
 
@@ -217,7 +209,6 @@ public class App {
             SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
             mac.init(secretKey);
             byte[] hmacBytes = mac.doFinal(data);
-            // Можно возвращать как hex или base64
             return bytesToHex(hmacBytes);
         } catch (Exception e) {
             throw new RuntimeException("Error while generating HMAC", e);
@@ -234,13 +225,12 @@ public class App {
     
     public static byte[] encryptAESGCM(byte[] payload, SecretKey key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        byte[] iv = new byte[12]; // 12 байт для GCM
+        byte[] iv = new byte[12];
         SecureRandom random = new SecureRandom();
         random.nextBytes(iv);
         GCMParameterSpec parameterSpec = new GCMParameterSpec(128, iv);
         cipher.init(Cipher.ENCRYPT_MODE, key, parameterSpec);
         byte[] encryptedData = cipher.doFinal(payload);
-        // Можно вернуть вместе IV и зашифрованные данные
         ByteBuffer byteBuffer = ByteBuffer.allocate(iv.length + encryptedData.length);
         byteBuffer.put(iv);
         byteBuffer.put(encryptedData);
@@ -252,7 +242,7 @@ public class App {
         // Инициализация Cipher для RSA с OAEP
         Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
         cipher.init(Cipher.ENCRYPT_MODE, serverPublicKey);
-        // Шифруем байты секретного ключа
+        
         return cipher.doFinal(sessionKey.getEncoded());
     }
     
@@ -263,31 +253,26 @@ public class App {
     }
     
     private static PublicKey getPublicKeyFromPem(String pem) throws Exception {
-        // Удаляем строки с -----BEGIN PUBLIC KEY----- и -----END PUBLIC KEY-----
         String publicKeyPEM = pem.replace("-----BEGIN PUBLIC KEY-----", "")
                                   .replace("-----END PUBLIC KEY-----", "")
-                                  .replaceAll("\\s", ""); // Убираем все пробелы и переносы строк
+                                  .replaceAll("\\s", "");
 
-        // Декодируем Base64
         byte[] encoded = Base64.getDecoder().decode(publicKeyPEM);
 
-        // Создаём X509EncodedKeySpec
         X509EncodedKeySpec keySpec = new X509EncodedKeySpec(encoded);
 
-        // Генерируем публичный ключ
         KeyFactory keyFactory = KeyFactory.getInstance("RSA");
         return keyFactory.generatePublic(keySpec);
     }
     
     
     public static byte[] generateIV() {
-        byte[] iv = new byte[12]; // стандартный размер для GCM
+        byte[] iv = new byte[12];
         new SecureRandom().nextBytes(iv);
         return iv;
     }
     
     
- // Метод для построения пакета по структуре
     public static byte[] buildPacket(byte[] encryptedSessionKey, byte[] iv, byte[] hmac, byte[] encryptedTLVData) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
@@ -295,8 +280,8 @@ public class App {
         int totalLength = 4 + encryptedSessionKey.length + iv.length + hmac.length + encryptedTLVData.length;
 
         // HEADER: 4 байта
-        baos.write(0x01); // версия
-        baos.write(0x01); // тип сообщения
+        baos.write(0x01);
+        baos.write(0x01);
         baos.write(ByteBuffer.allocate(2).putShort((short) totalLength).array()); // длина всего пакета
 
         // Остальные компоненты
@@ -334,7 +319,7 @@ public class App {
         int ivSize = 12;
         int hmacSize = 32;
 
-        int pos = 4; // после HEADER
+        int pos = 4;
 
         if (packetBytes.length < pos + encSessionKeySize + ivSize + hmacSize) {
             System.out.println("Пакет слишком короткий для ожидаемых компонентов");
@@ -353,8 +338,8 @@ public class App {
         byte[] encryptedTLVData = Arrays.copyOfRange(packetBytes, pos, packetBytes.length);
         System.out.println("--------------------------------------------------------------");
         // Вывод компонентов в hex
-        byte protocolVersion = packetBytes[0];     // 1 байт
-        byte messageType = packetBytes[1];         // 1 байт
+        byte protocolVersion = packetBytes[0];
+        byte messageType = packetBytes[1];
 
         System.out.println("=== HEADER ===");
         System.out.println("Версия протокола: " + String.format("0x%02X", protocolVersion));
